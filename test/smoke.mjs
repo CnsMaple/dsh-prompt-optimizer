@@ -125,14 +125,17 @@ async function setup({ config = {}, llmOverrides = {} } = {}) {
 }
 
 // 1b. 会话标注:客户端携带的 sessionId 原样标注到 llm 调用(opencode 等提供方
-//     要求会话头,适配器按 GenerateOptions.sessionId 注入 x-opencode-session)
+//     要求会话头,适配器按 GenerateOptions.sessionId 注入 x-opencode-session);
+//     未携带时回落合成 id——opencode-go 的会话头要求在任何调用路径上都得满足
 {
   const { handler, getOptions } = await setup()
   await call(handler, { text: '带会话', provider: 'p', model: 'm', sessionId: 'session-abc' })
   assert.equal(getOptions().sessionId, 'session-abc', '应把客户端会话 id 标注到 llm 调用')
   await call(handler, { text: '无会话', provider: 'p', model: 'm' })
-  assert.equal(getOptions().sessionId, undefined, '客户端未带会话 id 时不标注')
-  console.log('✓ 1b 会话 id 标注到 llm 调用')
+  assert.equal(getOptions().sessionId, 'prompt-optimizer-one-shot', '客户端未带会话 id 时标注合成 id 兜底')
+  await call(handler, { text: '空白会话', provider: 'p', model: 'm', sessionId: '   ' })
+  assert.equal(getOptions().sessionId, 'prompt-optimizer-one-shot', '空白会话 id 视为未携带')
+  console.log('✓ 1b 会话 id 标注到 llm 调用(缺席回落合成 id)')
 }
 
 // 2. 设置里固定模型('provider/model')覆盖会话模型
@@ -316,13 +319,17 @@ async function setup({ config = {}, llmOverrides = {} } = {}) {
   console.log('✓ 9 快速模式提示词')
 }
 
-// 9b. 默认完整模式:提示词要求 ANALYSIS + OPTIMIZED 双段
+// 9b. 默认快速模式(0.5.0 起):提示词只要 OPTIMIZED 单段,等待约减半;
+//     显式配置 full 才带 ANALYSIS
 {
   const { handler, getOptions } = await setup()
   await call(handler, { text: 'x', provider: 'p', model: 'm' })
-  assert.ok(getOptions().system.includes('ANALYSIS'))
   assert.ok(getOptions().system.includes('OPTIMIZED'))
-  console.log('✓ 9b 默认完整模式提示词')
+  assert.ok(!getOptions().system.includes('ANALYSIS'), '默认 fast 模式不应要求 ANALYSIS 段')
+  const full = await setup({ config: { mode: 'full' } })
+  await call(full.handler, { text: 'x', provider: 'p', model: 'm' })
+  assert.ok(full.getOptions().system.includes('ANALYSIS'), '显式 full 模式应要求 ANALYSIS 段')
+  console.log('✓ 9b 默认快速模式提示词')
 }
 
 // 10. 推理强度默认钳最低档(不显式配置时):钳到 resolveModel 暴露的最低 effort,覆盖会话值
@@ -497,15 +504,19 @@ async function setup({ config = {}, llmOverrides = {} } = {}) {
   console.log('✓ 15 tool-calls finish 防御')
 }
 
-// 16. 输出上限跟随输入长度:长草稿自动抬升 maxTokens,32768 封顶;可关
+// 16. 输出上限跟随输入长度:长草稿自动抬升 maxTokens,32768 封顶;可关;
+//     系数随模式(完整 ×2 / 快速 ×1.5,0.5.0 起默认快速)
 {
-  const longDraft = '一'.repeat(5000) // ≈5000 token,完整模式 ×2 = 10000 > 默认 8192
+  const longDraft = '一'.repeat(5000) // ≈5000 token
+  const full = await setup({ config: { mode: 'full' } })
+  await call(full.handler, { text: longDraft, provider: 'p', model: 'm' })
+  assert.equal(full.getOptions().maxTokens, 10000, '完整模式长输入应抬升输出上限(×2)')
   const a = await setup()
   await call(a.handler, { text: longDraft, provider: 'p', model: 'm' })
-  assert.equal(a.getOptions().maxTokens, 10000, '长输入应抬升输出上限')
+  assert.equal(a.getOptions().maxTokens, 8192, '默认快速模式 ×1.5 = 7500,不低于配置值 8192')
   const huge = await setup()
-  await call(huge.handler, { text: '一'.repeat(20000), provider: 'p', model: 'm' })
-  assert.equal(huge.getOptions().maxTokens, 32768, '超大输入应 32768 封顶')
+  await call(huge.handler, { text: '一'.repeat(24000), provider: 'p', model: 'm' })
+  assert.equal(huge.getOptions().maxTokens, 32768, '超大输入应 32768 封顶(快速 ×1.5 = 36000 → 触顶)')
   const off = await setup({ config: { autoMaxTokens: false } })
   await call(off.handler, { text: longDraft, provider: 'p', model: 'm' })
   assert.equal(off.getOptions().maxTokens, 8192, '关闭自适应后保持配置值')

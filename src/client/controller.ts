@@ -157,8 +157,11 @@ export function createOptimizerController(
   // 流式实况的合帧缓冲:delta 碎(实测 2 字符一帧),每帧都 set 会让面板
   // 整树重渲染数千次。攒 50ms 刷一次,人眼无感、滚动不卡。
   let liveRaw = ''
-  // R14:OPTIMIZED 标记确认后缓冲被压缩,分析段在此定格(压缩后解析不出 analysis)。
+  // R14:压缩把已定格的段落移出缓冲(压缩后解析不出),定格值在此持有:
+  // 分析段(旧顺序:OPTIMIZED 确认时定格)与优化稿段(新顺序:ANALYSIS
+  // 确认时定格)。每次请求开始时清零。
   let frozenAnalysis = ''
+  let frozenOptimized = ''
   let liveTimer: ReturnType<typeof setTimeout> | null = null
 
   const clearLiveTimer = () => {
@@ -207,6 +210,7 @@ export function createOptimizerController(
     clearLiveTimer()
     liveRaw = ''
     frozenAnalysis = ''
+    frozenOptimized = ''
     const controller = new AbortController()
     abort = controller
     // R21 客户端超时看门狗:Host 进程挂死或网络黑洞时,SSE 可能永远不返回首字节,
@@ -323,15 +327,16 @@ export function createOptimizerController(
                 liveTimer = null
                 // 仅在仍是当前请求的 loading 期间落帧(竞态:retry/close 后旧定时器不得复活)。
                 if (state.status === 'loading' && abort === controller) {
-                  // R14:OPTIMIZED 标记确认后压缩缓冲,分析段定格(只发生一次),
-                  // 长输出下缓冲与每帧扫描都收敛到尾部窗口。
+                  // R14:段落定格后压缩缓冲,压缩出的定格值在冻结字段里持有
+                  // (只在首次产出时采纳,避免后续帧把已冻结的段落清掉)。
                   const comp = compactPartialBuffer(liveRaw)
                   if (comp.compacted !== null) {
-                    frozenAnalysis = comp.analysis
+                    if (comp.analysis) frozenAnalysis = comp.analysis
+                    if (comp.optimized) frozenOptimized = comp.optimized
                     liveRaw = comp.compacted
                   }
                   const partial = parsePartialOptimizerOutput(liveRaw)
-                  const live = { analysis: partial.analysis || frozenAnalysis, optimized: partial.optimized }
+                  const live = { analysis: partial.analysis || frozenAnalysis, optimized: partial.optimized || frozenOptimized }
                   // 快速模式 + 模型不输出标记:解析不出任何段落时,原始流即优化稿本身,
                   // 直接实时预览(整段空等到 done 比看到逐字增长糟得多)。缓冲里出现
                   // 「<<<」视为标记正在形成,交回正常解析,避免把半个标记闪进预览。
