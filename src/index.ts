@@ -23,7 +23,7 @@ export interface Config {
   maxTokens: number
   /** 单次优化调用的超时时间(秒);超时后中止模型调用并通知客户端。 */
   timeoutSeconds: number
-  /** 优化模式('full'/'fast';其他值按 'full' 处理)。 */
+  /** 优化模式('full'/'fast';0.5.0 起默认 fast——仅优化稿,等待时间约减半;其他值按 'full' 处理)。 */
   mode: string
   /** 推理强度('lowest'/'session';其他值按 'lowest' 处理)。默认钳最低档:优化是格式化元任务,高档推理只拉长首 token 前的空等。 */
   reasoningEffort: string
@@ -47,7 +47,7 @@ export const Config = Schema.object({
   fallbackModel: Schema.string().volatile(),
   maxTokens: Schema.number().min(1024).max(32768).default(8192).volatile(),
   timeoutSeconds: Schema.number().min(10).max(600).default(120).volatile(),
-  mode: Schema.string().default('full').volatile(),
+  mode: Schema.string().default('fast').volatile(),
   reasoningEffort: Schema.string().default('lowest').volatile(),
   temperature: Schema.number().min(0).max(2).default(0.2).volatile(),
   autoMaxTokens: Schema.boolean().default(true).volatile(),
@@ -85,6 +85,10 @@ const NS = 'prompt-optimizer' as const
 const ROUTE_PATH = '/dsh-prompt-optimizer/optimize'
 const TEST_ROUTE_PATH = '/dsh-prompt-optimizer/test-model'
 const MAX_BODY_BYTES = 256 * 1024
+
+// 客户端未携带会话 id 时,优化调用标注的合成会话 id(opencode 等提供方要求
+// 会话头才能路由,见 options 组装处);探活调用的固定标注见 testHandler。
+const ONESHOT_SESSION_ID = 'prompt-optimizer-one-shot'
 
 // R27:宽 string schema 的配套告警(枚举值在用处处静默归一化,这里至少让用户
 // 在日志里看到自己手填的值不被支持)。每个 非法字段=值 组合只提醒一次。
@@ -439,8 +443,10 @@ export function apply(ctx: Context, config: Config) {
         const body = await readBodyOrReply(req, res)
         if (!body) return
         const text = asOptionalString(body.text)
-        // 客户端带来的会话 id(发起优化的会话),标注到 llm 调用(见 options 组装处)。
-        const sessionHint = asOptionalString(body.sessionId)
+        // 会话标注:客户端带来的会话 id(发起优化的会话)优先;缺席(旧版宿主
+        // 槽位不投递 sessionId、CLI 直调等)回落合成 id——标注恒存在,保证
+        // opencode 等要求会话头的提供方在任何路径上都能路由成功。
+        const sessionId = asOptionalString(body.sessionId) ?? ONESHOT_SESSION_ID
         if (!text) {
           writeJson(res, 400, { ok: false, error: '提示词内容为空' })
           return
@@ -538,11 +544,12 @@ export function apply(ctx: Context, config: Config) {
                 maxTokens,
                 temperature: cfg.temperature ?? 0.2,
                 signal: abort.signal,
-                // 会话标注:opencode 等提供方要求会话头(x-opencode-session,
+                // 会话标注恒存在:客户端会话 id 优先(会话级计量正确归属),
+                // 缺席回落合成 id。opencode 等提供方要求会话头(x-opencode-session,
                 // 由 pi-ai 适配器按 GenerateOptions.sessionId 注入),缺失会被
                 // API 以「缺少请求头」拒绝;其余适配器仅作模型不可见的传输
-                // 元数据处理,不外发。缺省(无会话来源)不标注。
-                ...(sessionHint ? { sessionId: sessionHint as GenerateOptions['sessionId'] } : {}),
+                // 元数据处理,不外发。
+                sessionId: sessionId as GenerateOptions['sessionId'],
               }
               let effort = sessionEffort
               if (!preferSessionEffort) {

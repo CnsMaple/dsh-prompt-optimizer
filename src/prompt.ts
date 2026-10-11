@@ -15,8 +15,10 @@ const MARKERS = {
 /** 优化策略:template = 无会话上下文,按结构模板改写;intent = 有会话上下文,先提炼用户目的再顺势润色(不套模板)。 */
 export type OptimizeStrategy = 'template' | 'intent'
 
-const ROLE_FULL_ZH = '你是一位资深提示词工程专家。用户会给你一段「提示词草稿」,你要完成两件事:诊断分析 + 优化改写。'
-const ROLE_FULL_EN = 'You are a senior prompt engineering expert. Given a "prompt draft" from the user, do two things: diagnose it, then rewrite an optimized version.'
+// full 模式输出顺序:优化稿在前、分析在后——用户最关心的交付物先流式到达,
+// 等待期即可复制取走(分析只是附带说明,晚到不影响使用)。
+const ROLE_FULL_ZH = '你是一位资深提示词工程专家。用户会给你一段「提示词草稿」,你要输出两段内容:先输出优化改写稿,再输出诊断分析。'
+const ROLE_FULL_EN = 'You are a senior prompt engineering expert. Given a "prompt draft" from the user, output the optimized rewrite first, then the diagnosis.'
 const ROLE_FAST_ZH = '你是一位资深提示词工程专家。用户会给你一段「提示词草稿」,请直接输出优化后的完整提示词,不要做任何诊断分析。'
 const ROLE_FAST_EN = 'You are a senior prompt engineering expert. Given a "prompt draft" from the user, output an optimized version directly — no diagnosis.'
 
@@ -74,7 +76,7 @@ const RULES_ZH = `# 保真与明确化原则(全程遵守)
 - 语义等价是底线:已明确的对象、方向、数量、范围、禁止项、术语必须与草稿一致,不得替换、扩大、缩小或颠倒
 - 来源可回溯:任何具体化的内容都必须能从草稿或上下文已确认信息找到依据;推断处用「如无特别说明/默认」措辞保留选择权,无依据的宁可不补
 - 保真自检:输出前逐要素核对——草稿的每个原子信息都要在优化稿中找到对应,找不到即为语义漂移,必须修正
-- 长度纪律:简单任务的优化稿控制在 800 字符以内,复杂任务可超出;任何情况下保真自检优先于长度——要素缺失比冗长更严重,但也不得冗余
+- 长度纪律:简单任务的优化稿控制在 500 字符以内,复杂任务可超出;优化稿就是提示词本身——不复述原稿、不加多余的解释或前言;任何情况下保真自检优先于长度——要素缺失比冗长更严重,但也不得冗余
 - 语言匹配:草稿以中文为主体则输出必须为中文,以英文为主体则输出必须为英文;保留原文的术语与专有名词`
 
 const RULES_EN = `# Fidelity & clarification rules (always apply)
@@ -82,7 +84,7 @@ const RULES_EN = `# Fidelity & clarification rules (always apply)
 - Semantic equivalence is the floor: what the draft states (subject, direction, quantities, scope, prohibitions, terms) must survive intact — never replace, widen, narrow, or invert it
 - Traceability: every concretized detail must trace back to the draft or to information the context has confirmed; mark inferences with "unless otherwise specified / by default" phrasing; when in doubt, leave it out
 - Fidelity self-check: before output, verify every atomic element of the draft has a counterpart in your rewrite — a missing one is semantic drift and must be fixed
-- Length discipline: keep the rewrite under 800 characters for simple tasks; longer is allowed for complex ones. Fidelity always outranks length — a missing element is worse than verbosity, but never pad
+- Length discipline: keep the rewrite under 500 characters for simple tasks; longer is allowed for complex ones. The rewrite is the prompt itself — never restate the draft or add explanations or preamble. Fidelity always outranks length — a missing element is worse than verbosity, but never pad
 - Language match: Chinese-dominant draft → Chinese output; English-dominant → English output; keep the draft's terms and proper nouns`
 
 const EXAMPLE_TEMPLATE_ZH = `# 示例(严格模仿其「输入 → 输出」的风格)
@@ -102,19 +104,19 @@ Input: (background: the user runs a 200-member neighborhood parents' swap group;
 Output: Redesign the "hidden gems" chain post for my 200-member neighborhood swap group (mostly parents): last round drew only a dozen joins because prizes were unappealing and the format confusing — provide a simple chain-post template, low-cost but attractive prize ideas, and concrete tactics to lift participation.`
 
 const FORMAT_FULL_ZH = `# 输出格式(严格遵守,标记行单独成行)
-${MARKERS.analysis}
-按维度逐条输出诊断,每条一行,格式:「维度 | 问题 | 建议」。某维度无明显问题时写:「维度 | 无明显问题 | -」。
 ${MARKERS.optimized}
 输出优化后的完整提示词全文
+${MARKERS.analysis}
+按维度逐条输出诊断,每条一行,格式:「维度 | 问题 | 建议」。某维度无明显问题时写:「维度 | 无明显问题 | -」。
 ${MARKERS.end}
 
 除上述标记包裹的内容外,不要输出任何其他文字。`
 
 const FORMAT_FULL_EN = `# Output format (strictly follow; markers on their own lines)
-${MARKERS.analysis}
-One finding per line: "dimension | issue | suggestion". If a dimension is fine: "dimension | no issue | -".
 ${MARKERS.optimized}
 The full optimized prompt text
+${MARKERS.analysis}
+One finding per line: "dimension | issue | suggestion". If a dimension is fine: "dimension | no issue | -".
 ${MARKERS.end}
 
 Do not output anything outside these markers.`
@@ -265,6 +267,30 @@ function findLastMarker(text: string, word: 'ANALYSIS' | 'OPTIMIZED' | 'END', be
   return last
 }
 
+/** 从 fromIndex 起找下一个任意标记(ANALYSIS/OPTIMIZED/END),用于确定段落的结束边界。 */
+function findNextMarker(text: string, fromIndex: number): { index: number; length: number } | null {
+  const re = /<<<\s*(?:ANALYSIS|OPTIMIZED|END)\s*>>>/g
+  re.lastIndex = fromIndex
+  const match = re.exec(text)
+  return match ? { index: match.index, length: match[0].length } : null
+}
+
+/**
+ * 截取某标记开启的段落:到下一个任意标记或首个 END 为止(取更近者)。
+ * 0.5.0 起 full 模式的输出顺序是「优化稿在前、分析在后」,解析必须与标记
+ * 顺序无关;END 之后出现的内容视为尾部杂音,不再归属任何段落(旧版对
+ * 「ANALYSIS 在 OPTIMIZED 后」的乱序防御由此统一覆盖)。
+ */
+function segmentAfter(text: string, marker: { index: number; length: number }): string {
+  const firstEnd = findMarker(text, 'END')
+  if (firstEnd && marker.index > firstEnd.index) return ''
+  const start = marker.index + marker.length
+  const next = findNextMarker(text, start)
+  let end = next ? next.index : text.length
+  if (firstEnd && firstEnd.index > start && firstEnd.index < end) end = firstEnd.index
+  return text.slice(start, end).trim()
+}
+
 const THINK_OPEN = '<think>'
 const THINK_CLOSE = '</think>'
 
@@ -338,11 +364,13 @@ export function createThinkFilter(): { push(chunk: string): string; flush(): str
 }
 
 /**
- * 解析模型输出中的标记段落。模型不遵守格式时降级:
- * 找到 OPTIMIZED 则其余归 analysis;两个标记都没有则全文作为 optimized。
- * fast 模式判 wellFormed 恒为 true:它只要求 OPTIMIZED 单标记(现有判定却要求
- * 双标记,连完全遵守 fast 格式的输出都会误报),而「无标记 = 整段即结果」时
- * 「混入多余文字」既无法检测也无需警告——警示横幅与记忆链门槛在 fast 下全是噪声。
+ * 解析模型输出中的标记段落。段落 = 标记之后到下一个标记/首个 END,与标记
+ * 顺序无关(0.5.0 起完整模式先输出优化稿、后输出分析;旧顺序的输出同样可解析)。
+ * 模型不遵守格式时降级:找到 OPTIMIZED 则其余归 analysis;两个标记都没有则
+ * 全文作为 optimized。fast 模式判 wellFormed 恒为 true:它只要求 OPTIMIZED
+ * 单标记(现有判定却要求双标记,连完全遵守 fast 格式的输出都会误报),而
+ * 「无标记 = 整段即结果」时「混入多余文字」既无法检测也无需警告——警示横幅
+ * 与记忆链门槛在 fast 下全是噪声。
  *
  * 解析前先剥离 `<think>` 思考块;推理模型会在思考里复述标记字样(实测:
  * `<<<OPTIMIZED>>>…<<<END>>>` 出现在思考里),因此多组标记时取最后一组 ——
@@ -351,25 +379,15 @@ export function createThinkFilter(): { push(chunk: string): string; flush(): str
 export function parseOptimizerOutput(raw: string, mode: OptimizerMode = 'full'): OptimizerOutput {
   const text = stripThinkBlocks(raw).trim()
   const o = findLastMarker(text, 'OPTIMIZED')
-  const a = o ? findLastMarker(text, 'ANALYSIS', o.index) : findLastMarker(text, 'ANALYSIS')
+  const a = findLastMarker(text, 'ANALYSIS')
   const wellFormed = mode === 'fast' ? true : Boolean(a && o)
 
   if (!a && !o) {
     return { analysis: '', optimized: text, wellFormed }
   }
-
-  let analysis = ''
-  let optimized = ''
-
-  if (a && (!o || a.index < o.index)) {
-    analysis = text.slice(a.index + a.length, o ? o.index : text.length).trim()
-  }
-  if (o) {
-    const e = findMarker(text, 'END', o.index + o.length)
-    optimized = text.slice(o.index + o.length, e ? e.index : text.length).trim()
-  }
+  const optimized = o ? segmentAfter(text, o) : ''
   return {
-    analysis,
+    analysis: a ? segmentAfter(text, a) : '',
     optimized: optimized || text,
     wellFormed,
   }
@@ -377,7 +395,8 @@ export function parseOptimizerOutput(raw: string, mode: OptimizerMode = 'full'):
 
 /**
  * 流式进行中的容错解析:只返回标记已确认的段落,不做整文兜底
- * (兜底会把含标记的原文误当优化结果显示出来)。两个段落都可能随 delta 增长。
+ * (兜底会把含标记的原文误当优化结果显示出来)。两个段落都可能随 delta 增长;
+ * 段落边界与标记顺序无关(完整模式 0.5.0 起优化稿先流式到达,分析随后)。
  * 思考块同样剥离;流式里尚未闭合的 `<think>` 视为思考中,该段暂不显示。
  */
 export function parsePartialOptimizerOutput(raw: string): { analysis: string; optimized: string } {
@@ -386,37 +405,46 @@ export function parsePartialOptimizerOutput(raw: string): { analysis: string; op
   const lastClose = text.lastIndexOf(THINK_CLOSE)
   if (lastOpen > lastClose) text = text.slice(0, lastOpen)
   const o = findLastMarker(text, 'OPTIMIZED')
-  const a = o ? findLastMarker(text, 'ANALYSIS', o.index) : findLastMarker(text, 'ANALYSIS')
-  let analysis = ''
-  let optimized = ''
-  if (a && (!o || a.index < o.index)) {
-    analysis = text.slice(a.index + a.length, o ? o.index : text.length).trim()
+  const a = findLastMarker(text, 'ANALYSIS')
+  return {
+    analysis: a ? segmentAfter(text, a) : '',
+    optimized: o ? segmentAfter(text, o) : '',
   }
-  if (o) {
-    const e = findMarker(text, 'END', o.index + o.length)
-    optimized = text.slice(o.index + o.length, e ? e.index : text.length).trim()
-  }
-  return { analysis, optimized }
 }
 
 export interface PartialCompaction {
-  /** 压缩后的等价缓冲(OPTIMIZED 标记已确认时才有);未触发为 null。 */
+  /** 压缩后的等价缓冲(仍增长段落的标记行 + 尾部窗口);未触发为 null。 */
   compacted: string | null
-  /** 本次压缩定格出的分析段(无 ANALYSIS 标记或标记在后时为空串)。 */
+  /** 压缩时定格出的分析段(旧顺序:OPTIMIZED 确认时定格;新顺序恒为空)。 */
   analysis: string
+  /** 压缩时定格出的优化稿段(新顺序:ANALYSIS 确认即优化稿定格);此前为空串。 */
+  optimized: string
 }
 
 /**
- * 流式缓冲压缩(R14):OPTIMIZED 标记确认后,分析段与草稿前缀已不再变化,
- * 把 OPTIMIZED 标记之前的全部内容裁掉、换成仅含标记的最小前缀——后续
- * parsePartialOptimizerOutput 对新缓冲的解析语义不变,而缓冲体积不再随
- * 长输出无界增长(每次合帧的正则扫描也只在尾部窗口进行)。
+ * 流式缓冲压缩(R14):标记确认、段落定格后,把已定格的部分从缓冲中裁掉,
+ * 缓冲收敛为「仍增长段落的标记行 + 尾部」,后续 parsePartialOptimizerOutput
+ * 对新缓冲的解析语义不变(客户端对定格段走冻结字段回退)。两种顺序分别压缩:
+ * - 旧顺序(分析在前):OPTIMIZED 确认 → 其前缀(草稿回显/分析段)整体定格丢弃;
+ * - 新顺序(优化稿在前):ANALYSIS 确认 → 优化稿定格,缓冲收缩为分析段尾部。
  */
 export function compactPartialBuffer(raw: string): PartialCompaction {
-  // 取最后一个 OPTIMIZED:思考块里复述的标记不能当锚点(锚错会把推理碎片定格成分析段)。
+  // 各取最后一个标记:思考块里复述的标记不能当锚点(锚错会把推理碎片定格成段落)。
   const o = findLastMarker(raw, 'OPTIMIZED')
-  if (!o) return { compacted: null, analysis: '' }
-  const a = findLastMarker(raw, 'ANALYSIS', o.index)
-  const analysis = a && a.index < o.index ? raw.slice(a.index + a.length, o.index).trim() : ''
-  return { compacted: `${MARKERS.optimized}\n${raw.slice(o.index + o.length)}`, analysis }
+  const a = findLastMarker(raw, 'ANALYSIS')
+  if (o && a && o.index < a.index) {
+    // 新顺序:分析段已开段,优化稿(o → ANALYSIS 之间)定格。
+    return {
+      compacted: `${MARKERS.analysis}\n${raw.slice(a.index + a.length)}`,
+      analysis: '',
+      optimized: raw.slice(o.index + o.length, a.index).trim(),
+    }
+  }
+  if (o) {
+    // OPTIMIZED 已确认而分析段未开(快速模式全程 / 新顺序分析未开始 / 旧顺序
+    // 分析已在 o 之前):o 之前的前缀整体定格丢弃,缓冲 = 标记行 + 优化稿尾部。
+    const analysis = a && a.index < o.index ? raw.slice(a.index + a.length, o.index).trim() : ''
+    return { compacted: `${MARKERS.optimized}\n${raw.slice(o.index + o.length)}`, analysis, optimized: '' }
+  }
+  return { compacted: null, analysis: '', optimized: '' }
 }

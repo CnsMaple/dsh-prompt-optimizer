@@ -606,4 +606,38 @@ const DONE = {
   console.log('✓ c21 快速模式无标记实时预览')
 }
 
+// c22. 新输出顺序(优化稿在前、分析在后)的流式预览:ANALYSIS 确认触发二次
+//      压缩后,优化稿由冻结字段兜底继续显示,分析段实时增长
+{
+  const { ctx } = makeCtx()
+  const c = createOptimizerController(ctx)
+  let sc
+  const stream = new ReadableStream({ start(ctrl) { sc = ctrl } })
+  await withFetch(
+    () => new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    async () => {
+      const pending = c.optimize('草稿', 's1')
+      await sleep(0)
+      sc.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'delta', text: '<<<OPTIMIZED>>>\n优化稿全文' })}\n\n`))
+      await sleep(80)
+      assert.equal(c.getSnapshot().live?.optimized, '优化稿全文', '优化稿先流式可见')
+      // ANALYSIS 确认:缓冲压缩为分析段尾部,优化稿转由冻结字段持有
+      sc.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'delta', text: '\n<<<ANALYSIS>>>\n分析' })}\n\n`))
+      await sleep(80)
+      assert.equal(c.getSnapshot().live?.optimized, '优化稿全文', '压缩后优化稿不得消失')
+      assert.equal(c.getSnapshot().live?.analysis, '分析')
+      // 分析继续增长,优化稿仍稳定
+      sc.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'delta', text: '到一半' })}\n\n`))
+      await sleep(80)
+      assert.equal(c.getSnapshot().live?.optimized, '优化稿全文')
+      assert.equal(c.getSnapshot().live?.analysis, '分析到一半')
+      sc.enqueue(enc.encode(`data: ${JSON.stringify(DONE)}\n\n`))
+      sc.close()
+      await pending
+      assert.equal(c.getSnapshot().status, 'done')
+    },
+  )
+  console.log('✓ c22 新顺序流式预览与压缩兜底')
+}
+
 console.log('\ncontroller: all passed')

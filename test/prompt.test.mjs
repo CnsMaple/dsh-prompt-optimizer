@@ -286,4 +286,57 @@ import { buildSystemPrompt, buildUserPayload, capConversationContext, compactPar
   console.log('✓ p17 压缩锚定最后一组标记')
 }
 
+// p18 新输出顺序(0.5.0:优化稿在前、分析在后)的完整解析
+{
+  const out = parseOptimizerOutput(['<<<OPTIMIZED>>>', '优化后的全文', '<<<ANALYSIS>>>', '目标清晰度 | 模糊 | 明确产出', '<<<END>>>'].join('\n'))
+  assert.equal(out.wellFormed, true)
+  assert.equal(out.optimized, '优化后的全文')
+  assert.match(out.analysis, /目标清晰度/)
+  // END 缺失同样可解析
+  const noEnd = parseOptimizerOutput('<<<OPTIMIZED>>>\n优化稿\n<<<ANALYSIS>>>\n分析到结尾')
+  assert.equal(noEnd.optimized, '优化稿')
+  assert.equal(noEnd.analysis, '分析到结尾')
+  console.log('✓ p18 新输出顺序完整解析')
+}
+
+// p19 新输出顺序的流式解析:优化稿先增长,ANALYSIS 确认后定格,分析随后增长;
+// END 之后的杂音不吞进任何段落
+{
+  const first = parsePartialOptimizerOutput('<<<OPTIMIZED>>>\n优化稿写到一半')
+  assert.equal(first.optimized, '优化稿写到一半', '优化稿应先于分析流式可见')
+  assert.equal(first.analysis, '')
+  const mid = parsePartialOptimizerOutput('<<<OPTIMIZED>>>\n优化稿全文\n<<<ANALYSIS>>>\n分析到一半')
+  assert.equal(mid.optimized, '优化稿全文', 'ANALYSIS 确认后优化稿应定格')
+  assert.equal(mid.analysis, '分析到一半')
+  const end = parsePartialOptimizerOutput('<<<OPTIMIZED>>>\n优化稿全文\n<<<ANALYSIS>>>\n分析全文\n<<<END>>>')
+  assert.deepEqual(end, { analysis: '分析全文', optimized: '优化稿全文' })
+  // 旧代码对「ANALYSIS 在 OPTIMIZED 后」一概忽略;新顺序下这是合法结构,
+  // 但 END 之后的 ANALYSIS 仍是尾部杂音,不得吞进分析段
+  const junk = parseOptimizerOutput('<<<OPTIMIZED>>>\n正文\n<<<END>>>\n<<<ANALYSIS>>>\n尾巴')
+  assert.equal(junk.optimized, '正文')
+  assert.equal(junk.analysis, '')
+  console.log('✓ p19 新输出顺序流式解析')
+}
+
+// p20 新输出顺序的两段式缓冲压缩:优化稿定格进冻结字段,缓冲收缩为分析段尾部
+{
+  // 阶段一:OPTIMIZED 确认、分析未开始——前缀裁掉,缓冲 = 标记行 + 优化稿尾部
+  const stage1 = compactPartialBuffer('<<<OPTIMIZED>>>\n优化输出到一半')
+  assert.ok(stage1.compacted.startsWith('<<<OPTIMIZED>>>'), '缓冲应以 OPTIMIZED 标记行开头')
+  assert.equal(parsePartialOptimizerOutput(stage1.compacted).optimized, '优化输出到一半', '压缩后解析语义不变')
+  assert.equal(stage1.analysis, '')
+  assert.equal(stage1.optimized, '', '分析未开始,无优化稿可冻结')
+  // 阶段二:ANALYSIS 确认——优化稿定格,缓冲收缩为分析段标记 + 尾部
+  const longPrefix = 'y'.repeat(10_000)
+  const stage2 = compactPartialBuffer(`<<<OPTIMIZED>>>\n${longPrefix}\n优化稿全文\n<<<ANALYSIS>>>\n分析到一半`)
+  assert.equal(stage2.optimized, `${longPrefix}\n优化稿全文`, '优化稿全文应被冻结')
+  assert.ok(stage2.compacted.startsWith('<<<ANALYSIS>>>'), '缓冲应收缩为分析段')
+  assert.ok(stage2.compacted.length < 100, '压缩后缓冲只含分析段尾部窗口')
+  // 压缩后解析:分析继续增长;优化稿由客户端冻结字段回退(解析结果为空)
+  const grown = parsePartialOptimizerOutput(stage2.compacted + ',继续分析')
+  assert.equal(grown.analysis, '分析到一半,继续分析')
+  assert.equal(grown.optimized, '', '压缩缓冲不再携带优化稿,由冻结字段兜底')
+  console.log('✓ p20 新顺序两段式压缩')
+}
+
 console.log('\nprompt: all passed')

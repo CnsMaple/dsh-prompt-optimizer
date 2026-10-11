@@ -273,7 +273,8 @@ export function createSettingsCard(ctx: ClientContext, face: SettingsFace) {
     ] as const
     const SETTING_DEFAULTS: OptimizerSettingsValue = {
       language: 'zh', model: '', fallbackModel: '', maxTokens: 8192, timeoutSeconds: 120,
-      mode: 'full', reasoningEffort: 'lowest', temperature: 0.2, autoMaxTokens: true, includeContext: true,
+      // 与 Host 侧 Config 默认口径一致(0.5.0 起默认快速模式)。
+      mode: 'fast', reasoningEffort: 'lowest', temperature: 0.2, autoMaxTokens: true, includeContext: true,
     }
     const undoStack = useRef<SettingValueSnapshot[]>([])
     const [canUndo, setCanUndo] = useState(false)
@@ -434,7 +435,7 @@ export function createSettingsCard(ctx: ClientContext, face: SettingsFace) {
         <Row title={t('settings.mode')} desc={t('settings.mode.desc')}>
           <Segmented
             label={t('settings.mode')}
-            value={value.mode ?? 'full'}
+            value={value.mode ?? 'fast'}
             options={[
               { value: 'full', label: t('settings.mode.full.short'), title: t('settings.mode.full') },
               { value: 'fast', label: t('settings.mode.fast.short'), title: t('settings.mode.fast') },
