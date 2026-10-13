@@ -1,4 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis'
+// schemastery 必须留在 dependencies,**不要**改成 peerDependencies(issue #5 的建议)。
+// 本插件装在 profile 里,而内核只把 schemastery 放在 dsh/node_modules/ 下——不在
+// 插件的 Node 向上解析路径上;profile 又设了 autoInstallPeers: false。实测改成
+// peer 后插件加载即 ERR_MODULE_NOT_FOUND。它与 dsh-settings 不同:dsh-settings 是
+// 按包名在 profile 内解析的内核行,hoisted 副本会遮蔽内核那份(故 0.4.0 已彻底移除);
+// schemastery 只是被按值 import 的库,不存在遮蔽,且这里 Schema.object() 在加载时
+// 求值,属运行期值导入而非类型标注。
 import Schema from '@deepseek-ai/schemastery'
 // 0.2.0 起设置改为宿主按插件 Config schema 自动生成表单(SettingsForms),
 // 插件不再注册命名空间;0.1.x 线的两套 API 由下方运行时探测分派,类型只在本地声明。
