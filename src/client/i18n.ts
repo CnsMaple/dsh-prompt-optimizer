@@ -51,8 +51,11 @@ const dict = {
     'panel.truncated': '输出达到 Token 上限被截断。可在设置的插件页「提示词优化」中调高「最大输出 Token」。',
     'panel.notWellFormed': '模型未完全遵守输出格式,以上内容可能混入多余文字,替换前请扫一眼。',
     'settings.loading': '设置加载中…',
-    'settings.unavailable': '当前连接不可写设置(远程页面为内存模式),改动仅在本次会话生效。',
-    'settings.memoryOnly': '当前为内存模式:设置不会持久化。',
+    // 0.2.1-rc.2 删除了 ConfigFormSnapshot.mode('host' | 'memory'):设置只可能是
+    // 宿主持久化,不再有浏览器进程内内存模式。文案随之去掉「内存模式」措辞,
+    // 只保留「这份部署不对外提供该命名空间 / 当前只读」两种真实状态。
+    'settings.unavailable': '当前宿主未向此页面开放本插件的设置命名空间;可用组合层配置,或在 dsh 设置中检查插件是否启用。',
+    'settings.readOnly': '当前设置只读:宿主拒绝写入,改动不会保存。',
     'settings.undo': '撤销上一次修改',
     'settings.undoTitle': '恢复这次修改前的全部设置(仅本次页面会话内可撤销)',
     'settings.group.model': '模型',
@@ -132,8 +135,10 @@ const dict = {
     'panel.truncated': 'Output hit the token cap and was truncated. Raise "Max output tokens" in the "Prompt Optimizer" tab of the plugins settings page.',
     'panel.notWellFormed': 'The model did not fully follow the output format; the content above may contain extra text — review before replacing.',
     'settings.loading': 'Loading settings…',
-    'settings.unavailable': 'This connection cannot write settings (remote page is in-memory); changes apply to this session only.',
-    'settings.memoryOnly': 'In-memory mode: settings will not persist.',
+    // 0.2.1-rc.2 removed ConfigFormSnapshot.mode ('host' | 'memory'): settings are
+    // always Host-persisted now, there is no process-local memory mode.
+    'settings.unavailable': 'This Host does not expose the plugin settings namespace to this page; use composition config, or check that the plugin is enabled.',
+    'settings.readOnly': 'Settings are read-only: the Host refuses writes, so changes will not be saved.',
     'settings.undo': 'Undo last change',
     'settings.undoTitle': 'Restore all settings to before this change (undo is session-only)',
     'settings.group.model': 'Model',

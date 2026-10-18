@@ -438,7 +438,11 @@ export function apply(ctx: Context, config: Config) {
     }).settings
     if (!settings) return
     if (typeof settings.configure === 'function') {
-      // 0.2.0:插件自带设置卡,关闭宿主按 Config schema 生成的原生表单页。
+      // 0.2.x:声明本插件自带设置卡。`auto:false` 在 0.2.0 的语义是「关闭宿主按
+      // Config schema 自动生成的原生表单页」;0.2.1 起该页已无客户端消费方
+      // (全库只剩 schema 字段定义,没有任何 UI 读取 autoGenerate),所以这条调用
+      // 现在只作**显式意图声明**:告诉宿主这个插件自己渲染设置面。保留它让两代
+      // 宿主行为一致,未来若恢复消费方语义也仍然正确。
       ctx.effect(() => settings.configure!({ auto: false }, (ctx as unknown as { fiber?: unknown }).fiber))
     }
     if (typeof settings.installSection === 'function') {

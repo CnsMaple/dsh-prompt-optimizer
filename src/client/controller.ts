@@ -1,8 +1,8 @@
 // 0.1.2 起 dsh-client-runtime 已并包移除,ClientContext 即 cordis 的 Context。
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
-import type { OptimizerHistoryEntry } from './host-faces.js'
-import { legacyQueryFace, type ModelDirectoriesLike } from './host-faces.js'
+import type { OptimizerHistoryEntry, OptimizerSessionHistoryRecord } from './host-faces.js'
+import { legacyQueryFace, sessionEventEntries, type ModelDirectoriesLike } from './host-faces.js'
 import { capConversationContext, compactPartialBuffer, parsePartialOptimizerOutput, type ConversationTurn } from '../prompt.js'
 
 export interface OptimizeResult {
@@ -111,7 +111,7 @@ function sampleContextTurns(turns: ConversationTurn[]): ConversationTurn[] {
  * (assistant/message,跳过只承载 usage 的空壳消息)。返回按时间升序,
  * 已按共享预算收敛(用户消息保底 4 条,总量 ≤8 条 / 1600 字符)。
  */
-export function extractContextTurns(entries: readonly OptimizerHistoryEntry[]): ConversationTurn[] {
+export function extractContextTurns(entries: readonly (OptimizerHistoryEntry | OptimizerSessionHistoryRecord)[]): ConversationTurn[] {
   const turns: ConversationTurn[] = []
   for (const entry of entries) {
     const event = entry?.event
@@ -157,6 +157,12 @@ export function createOptimizerController(
      * 等不到就绪),在点击时惰性读取;缺席返回 undefined,走 Host 回退解析。
      */
     getSessionModelDirectories?: () => ModelDirectoriesLike | undefined
+    /**
+     * 会话服务读取器(`ctx.sessions`,可选)。用于从会话事件窗口取近期对话作为
+     * 优化上下文——0.2.x 上这是唯一能读到既有历史的公开面(见 host-faces
+     * `sessionEventEntries` 的说明)。缺席时退回 legacy 查询面 / 按无上下文降级。
+     */
+    getSessions?: () => unknown
   } = {},
 ) {
   let state: OptimizerState = INITIAL
@@ -274,10 +280,22 @@ export function createOptimizerController(
         })(),
         (async (): Promise<ConversationTurn[] | undefined> => {
           if (!(opts.isContextEnabled?.() ?? true)) return undefined
+          // 历史读取先走 0.2.x 的本地事件窗口(ctx.sessions.binding().eventSource),
+          // 再退回更早宿主上探测过的 legacy connection.api.sessions.history。
+          // 窗口里已由宿主灌入尾部页(500 条 / 至少 2 个 turn / 50 条消息),
+          // 足够采样最近 4 条用户输入(见 sampleContextTurns)。
           try {
-            // 页大小放宽到 24:agentic 会话里 assistant 步骤消息远多于用户消息,
-            // 取样要保证能捞到最近 4 条用户输入(见 sampleContextTurns)。
-            // 旧版查询面(connection.api.sessions.history)上游从未提供,缺席按无上下文。
+            const entries = sessionEventEntries(opts.getSessions?.(), sessionId)
+            if (entries?.length) {
+              const turns = extractContextTurns(entries)
+              if (turns.length) return turns
+              return undefined
+            }
+            console.warn('[dsh-prompt-optimizer] 当前会话没有可读的事件窗口,尝试旧查询面')
+          } catch (cause) {
+            console.warn('[dsh-prompt-optimizer] 读取会话事件窗口失败,尝试旧查询面:', cause)
+          }
+          try {
             const history = legacyQueryFace(ctx.connection)?.sessions?.history
             if (!history) {
               console.warn('[dsh-prompt-optimizer] 会话历史查询面在当前 dsh 版本缺席,按无上下文优化')

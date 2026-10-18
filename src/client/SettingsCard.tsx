@@ -367,7 +367,7 @@ export function createSettingsCard(ctx: ClientContext, face: SettingsFace) {
       <section className="dsh-po-sec">
         {snap.status === 'loading' && <div className="dsh-po-hint">{t('settings.loading')}</div>}
         {snap.status === 'unavailable' && <div className="dsh-po-hint">{t('settings.unavailable')}</div>}
-        {!writable && snap.status === 'ready' && <div className="dsh-po-hint">{t('settings.memoryOnly')}</div>}
+        {!writable && snap.status === 'ready' && <div className="dsh-po-hint">{t('settings.readOnly')}</div>}
 
         <div className="dsh-po-group">{t('settings.group.model')}</div>
         <Row title={t('settings.model')} desc={t('settings.model.desc')}>

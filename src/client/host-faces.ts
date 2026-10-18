@@ -114,6 +114,63 @@ export interface LegacySessionQueryFace {
 }
 
 /** 读取旧版查询面(整体缺席时返回 undefined,调用方各自降级)。 */
-export function legacyQueryFace(connection: unknown): LegacySessionQueryFace['api'] {
+export function legacyQueryFace(connection: unknown): LegacySessionQueryApi | undefined {
   return (connection as LegacySessionQueryFace | undefined)?.api
+}
+
+/** 旧版查询面本体(供调用方标注变量)。 */
+export type LegacySessionQueryApi = NonNullable<LegacySessionQueryFace['api']>
+
+/**
+ * 一条会话事件:`session/page` 记录与本地事件窗口条目形状一致。
+ * `event.data` 是 merge-extensible 的 JSON,按事件类型各自解释。
+ */
+export interface OptimizerSessionHistoryRecord {
+  type?: string
+  event?: {
+    type?: string
+    seq?: number
+    time?: number
+    data?: unknown
+  }
+}
+
+/**
+ * 会话事件窗口(`ctx.sessions.binding(id).eventSource`)的结构面。
+ *
+ * 这是 0.2.x 上**真正可用**的历史来源:`ISessions.retain()` 打开会话时先把
+ * 尾部页(`HISTORY_PAGE_OPTIONS = { maxMessages: 500, turnWindow: { minMessages:50, minTurns:2 } }`)
+ * 灌进这个窗口,`loadOlder()` 再向前翻页;窗口里就是 `{ type:'event', event }`
+ * 序列,正是提炼上下文需要的真实用户/助手消息。
+ *
+ * 对照:`session/page` RPC 虽然存在,但它要求调用方先给出一个 `throughSeq`
+ * 上界(来自 follow 开场帧);冷调用传 -1 会被 `paginate()` 算成
+ * `end = 0` 而返回空页,拿不到既有历史。`ctx.conversation` 则完全不暴露历史。
+ */
+export interface OptimizerEventWindow {
+  readonly entries?: readonly OptimizerSessionHistoryRecord[]
+}
+
+export interface OptimizerSessionsBinding {
+  readonly eventSource?: { getSnapshot(): OptimizerEventWindow }
+}
+
+/**
+ * 会话服务(`ctx.sessions`,`@deepseek-ai/dsh-api-session-controller/client`)的最小结构面。
+ * `binding(id)` 只对**已保留**的会话返回绑定;未打开过的会话返回 undefined。
+ */
+export interface OptimizerSessionsLike {
+  binding?(sessionId: string): OptimizerSessionsBinding | undefined
+}
+
+/**
+ * 从本地事件窗口读取该会话当前已装载的历史条目。
+ *
+ * 返回 undefined 表示「当前宿主/当前会话拿不到窗口」,调用方按无上下文降级。
+ * 非破坏性:只读快照,不 retain、不触发打开、不翻页。
+ */
+export function sessionEventEntries(sessions: unknown, sessionId: string): readonly OptimizerSessionHistoryRecord[] | undefined {
+  const binding = (sessions as OptimizerSessionsLike | undefined)?.binding?.(sessionId)
+  const window = binding?.eventSource?.getSnapshot()
+  return window?.entries
 }

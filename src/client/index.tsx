@@ -70,6 +70,13 @@ export function apply(ctx: ClientContext): void {
   ctx.inject(['modelDirectories'], (mctx) => {
     modelDirectories = (mctx as unknown as { modelDirectories?: ModelDirectoriesLike }).modelDirectories
   })
+  // 可选消费会话服务(`ctx.sessions`,dsh-api-session-controller):「携带上下文」
+  // 从会话事件窗口取近期对话。同样**独立 inject** —— 老宿主无该服务时保持
+  // undefined,controller 自动退回 legacy 查询面或按无上下文优化。
+  let sessions: unknown
+  ctx.inject(['sessions'], (sctx) => {
+    sessions = (sctx as unknown as { sessions?: unknown }).sessions
+  })
 
   // 设置面:0.2.0 走 configForms(命名空间 = entry id),0.1.x 走 settingsScope。
   // 谁先到谁生效;都没到时快照为 loading,controller 的判定函数按缺省口径工作。
@@ -97,6 +104,8 @@ export function apply(ctx: ClientContext): void {
     getWatchdogMs: () => ((scope.getSnapshot().value?.timeoutSeconds ?? 120) + 5) * 1000,
     // 「跟随会话」的模型来源(见上);点击时读取,服务缺席走 Host 回退。
     getSessionModelDirectories: () => modelDirectories,
+    // 「携带上下文」的会话事件窗口来源(见上);点击时读取。
+    getSessions: () => sessions,
   })
 
   // 发送栏按钮与结果面板。0.1.2 起 conversation.input.* 槽位是 session scope,
@@ -127,43 +136,41 @@ export function apply(ctx: ClientContext): void {
     )
   })
 
-  // 设置入口,双槽位并挂,各自宿主只声明/渲染自己认识的那一个:
+  // 设置入口,双槽位各挂一次,各自宿主只声明/渲染自己认识的那一个:
   //  - 0.1.x:settings.plugin.item(keyed 槽位,key = 设置命名空间);
-  //  - 0.2.0:settings.plugins.tab(插件设置页的标签页,id + order + label;
+  //  - 0.2.0+:settings.plugins.tab(插件设置页的标签页,id + order + label;
   //    仅一个第三方标签时官方组件直接整页展示)。
-  // 槽位的 inject 回调只在**宿主声明了该槽位**时触发,因此任一代宿主上恰好
-  // 挂载一次;两个名字都未声明时这里完全不动。未声明槽位上的注册静默存在、
-  // 不渲染,无副作用。
-  let settingsDisposers: (() => void)[] | null = null
-  const mountSettingsCard = (slotCtx: ClientContext): (() => void) => {
-    const unmount = () => {
-      for (const dispose of settingsDisposers ?? []) dispose()
-      settingsDisposers = null
-    }
-    if (settingsDisposers) return unmount
-    const card = createSettingsCard(slotCtx, settings.face)
+  //
+  // **两个槽位必须各自独立 inject,不能共用一个回调**:0.2.1-rc.2 起
+  // settings.plugin.item 连字符串都不再出现在任何运行时 bundle 里(npm 包与
+  // 桌面端 app.asar 双向确认),而 SlotCore.register 对未声明槽位是**同步抛错**
+  // ——`slot "settings.plugin.item" is not declared`。共用一个回调会让
+  // 「0.2.1 上先注册 tab、再注册 item 时抛异常」把整个设置页挂载拖垮。
+  // 分开后:inject 回调只在宿主声明了该槽位时触发,任一代恰好挂一次。
+  const slotsAny = ctx.slots as unknown as { inject(name: string, register: () => unknown): void }
+  const registerSettingsTab = (slotCtx: ClientContext): (() => void) => {
     const slots = slotCtx.slots as unknown as {
       register(options: Record<string, unknown>, component: unknown): () => void
     }
-    // 两个槽位的注册都走结构面:0.1.x 的 settings.plugin.item 与 0.2.0 的
-    // settings.plugins.tab 互不在对方宿主的 SlotMap 声明里。
-    settingsDisposers = [
-      slots.register(
-        {
-          name: 'settings.plugins.tab',
-          id: SETTINGS_ENTRY_ID,
-          order: 30,
-          label: () => translate('panel.title'),
-          inject: () => ({}),
-        },
-        card,
-      ),
-      slots.register({ name: 'settings.plugin.item', key: SETTINGS_ENTRY_ID }, card),
-    ]
-    return unmount
+    const card = createSettingsCard(slotCtx, settings.face)
+    return slots.register(
+      {
+        name: 'settings.plugins.tab',
+        id: SETTINGS_ENTRY_ID,
+        order: 30,
+        label: () => translate('panel.title'),
+        inject: () => ({}),
+      },
+      card,
+    )
   }
-  // 槽位的 inject 回调只在宿主声明了该槽位时触发:任一代宿主上恰好挂载一次。
-  const slotsAny = ctx.slots as unknown as { inject(name: string, register: () => unknown): void }
-  slotsAny.inject('settings.plugin.item', () => mountSettingsCard(ctx))
-  slotsAny.inject('settings.plugins.tab', () => mountSettingsCard(ctx))
+  const registerSettingsItem = (slotCtx: ClientContext): (() => void) => {
+    const slots = slotCtx.slots as unknown as {
+      register(options: Record<string, unknown>, component: unknown): () => void
+    }
+    const card = createSettingsCard(slotCtx, settings.face)
+    return slots.register({ name: 'settings.plugin.item', key: SETTINGS_ENTRY_ID }, card)
+  }
+  slotsAny.inject('settings.plugins.tab', () => registerSettingsTab(ctx))
+  slotsAny.inject('settings.plugin.item', () => registerSettingsItem(ctx))
 }

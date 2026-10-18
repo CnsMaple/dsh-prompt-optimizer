@@ -699,4 +699,59 @@ const DONE = {
   console.log('✓ c24 retry 保留斜杠前缀')
 }
 
+// c25. 0.2.1 适配:上下文优先从会话事件窗口(ctx.sessions.binding().eventSource)取,
+//      并且不再触碰 legacy 查询面。这是「携带上下文」在 0.2.x 上真正生效的路径
+//      ——旧实现只调 connection.api.sessions.history,而上游从未提供它,等于一直静默降级。
+{
+  const ctx = {}
+  ctx.modelDirectories = { directoryFor: () => ({ load: async () => ({ current: { provider: 'p', model: 'm' }, groups: [], status: 'ready', error: null }) }) }
+  let legacyCalls = 0
+  ctx.connection = { api: { sessions: { history: async () => { legacyCalls += 1; return { ok: true, value: { events: [] } } } } } }
+  ctx.sessions = {
+    binding: (sessionId) =>
+      sessionId === 's1'
+        ? {
+            eventSource: {
+              getSnapshot: () => ({
+                entries: [
+                  { type: 'event', event: { type: 'user/message', seq: 0, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '窗口里的用户消息' }] } } },
+                  { type: 'event', event: { type: 'assistant/message', seq: 1, time: 2, data: { message: { content: [{ type: 'text', text: '窗口里的助手回复' }] } } } },
+                ],
+              }),
+            },
+          }
+        : undefined,
+  }
+  const c = createOptimizerController(ctx, { getSessions: () => ctx.sessions })
+  await withFetch(
+    () => sseResponse([DONE]),
+    async (calls) => {
+      await c.optimize('草稿', 's1')
+      const ctxTurns = calls[0].body.context
+      assert.equal(ctxTurns.length, 2, '应从事件窗口取到两条上下文')
+      assert.equal(ctxTurns[0].text, '窗口里的用户消息')
+      assert.equal(ctxTurns[1].text, '窗口里的助手回复')
+      assert.equal(legacyCalls, 0, '窗口可用时不应再调 legacy 查询面')
+    },
+  )
+  console.log('✓ c25 上下文优先来自会话事件窗口')
+}
+
+// c26. 窗口取不到(会话未保留/服务缺席)时安静降级为无上下文,且不抛错。
+{
+  const ctx = {}
+  ctx.connection = {}
+  ctx.sessions = { binding: () => undefined }
+  const c = createOptimizerController(ctx, { getSessions: () => ctx.sessions })
+  await withFetch(
+    () => sseResponse([DONE]),
+    async (calls) => {
+      await c.optimize('草稿', 's1')
+      assert.equal(calls[0].body.context, undefined, '无窗口时 context 应为 undefined')
+      assert.equal(c.getSnapshot().status, 'done', '降级不应影响优化本身')
+    },
+  )
+  console.log('✓ c26 无事件窗口时安静降级')
+}
+
 console.log('\ncontroller: all passed')
