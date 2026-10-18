@@ -289,9 +289,13 @@ export function createOptimizerController(
             if (entries?.length) {
               const turns = extractContextTurns(entries)
               if (turns.length) return turns
-              return undefined
+              // 窗口有内容但榨不出可用的 user/assistant 对话(例如只有 transient
+              // 实时块、或全是 runtime-context 注入)。**继续**往下降级,不能在这里
+              // 直接 return undefined——那会让下面的 legacy 分支变成死代码。
+              console.warn('[dsh-prompt-optimizer] 会话事件窗口里没有可用的对话,尝试旧查询面')
+            } else {
+              console.warn('[dsh-prompt-optimizer] 当前会话没有可读的事件窗口,尝试旧查询面')
             }
-            console.warn('[dsh-prompt-optimizer] 当前会话没有可读的事件窗口,尝试旧查询面')
           } catch (cause) {
             console.warn('[dsh-prompt-optimizer] 读取会话事件窗口失败,尝试旧查询面:', cause)
           }

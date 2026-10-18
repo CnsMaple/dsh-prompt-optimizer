@@ -160,10 +160,29 @@ const CONTEXT_MAX_TURNS = 8
 const CONTEXT_MAX_CHARS = 1600
 const CONTEXT_TURN_MAX_CHARS = 600
 
+/** 用户消息保底条数:见 capConversationContext 的说明。 */
+const CONTEXT_MIN_USER_TURNS = 1
+/** 用户消息在总预算中的份额上限(其余留给助手回复)。 */
+const CONTEXT_USER_BUDGET = 800
+
 /**
- * 收敛会话上下文到预算内:保留最近 CONTEXT_MAX_TURNS 条,每条截断到
- * CONTEXT_TURN_MAX_CHARS,总字符再压到 CONTEXT_MAX_CHARS 以内(从最新往回取舍)。
- * 输入按时间升序,返回保持升序。
+ * 收敛会话上下文到预算内,返回按时间升序。
+ *
+ * **为什么按角色分预算**:用户消息与助手回复共用单一预算时,从最新往回走
+ * 一旦遇到装不下的长助手回复就会 `break`,把更早(往往也是唯一)的用户消息
+ * 一起丢掉。实测两种典型形态:4×user(200 字符)交错 4×assistant(600 字符)
+ * 只剩 1 条用户消息;而 agentic 会话「1 条用户输入 + 4 段长助手步骤」会让
+ * **用户消息归零**——此时发给模型的只有助手片段,但 buildUserPayload 明确
+ * 要求「不要回答、延续或引用上下文」,纯助手片段比不带上下文更糟(模型容易
+ * 把上文当成待续写的正文)。
+ *
+ * 现有做法:
+ *  1. 先按「用户优先」分配:从最新往回取用户消息,受 CONTEXT_USER_BUDGET 约束,
+ *     且**至少保底 CONTEXT_MIN_USER_TURNS 条**(最新一条即便超预算也截断保留);
+ *  2. 再用剩余预算从最新往回补助手回复,**装不下的跳过而不是中断**
+ *     (`continue`),避免一条长回复堵死后面所有候选;
+ *  3. 合并后按原顺序排序,总量不超过 CONTEXT_MAX_CHARS(截断保留的条目可能
+ *     略微超出,由最后一步统一再收敛一次)。
  */
 export function capConversationContext(turns: ConversationTurn[]): ConversationTurn[] {
   const recent = turns
@@ -173,19 +192,46 @@ export function capConversationContext(turns: ConversationTurn[]): ConversationT
       role: t.role,
       text: t.text.trim().length > CONTEXT_TURN_MAX_CHARS ? `${t.text.trim().slice(0, CONTEXT_TURN_MAX_CHARS)}…` : t.text.trim(),
     }))
+  if (recent.length === 0) return []
+
+  // 每条带上原始下标,最后按时间升序还原。
+  const indexed = recent.map((turn, index) => ({ turn, index }))
+  const kept = new Map<number, ConversationTurn>()
   let budget = CONTEXT_MAX_CHARS
-  const kept: ConversationTurn[] = []
-  for (let i = recent.length - 1; i >= 0; i--) {
-    const turn = recent[i]
-    if (turn.text.length > budget) {
-      // 最新一条也超预算时截断保留(宁可残缺,不能没有);非最新直接丢弃。
-      if (kept.length === 0) kept.push({ role: turn.role, text: `${turn.text.slice(0, budget)}…` })
-      break
+
+  // 1) 用户消息优先:最新的一定保住,其余按预算从新到旧。
+  const users = indexed.filter((x) => x.turn.role === 'user')
+  let userBudget = Math.min(CONTEXT_USER_BUDGET, budget)
+  for (let i = users.length - 1; i >= 0; i--) {
+    const { turn, index } = users[i]
+    const keptUsers = users.length - i
+    const mustKeep = keptUsers <= CONTEXT_MIN_USER_TURNS && ![...kept.values()].some((t) => t.role === 'user')
+    if (turn.text.length <= userBudget) {
+      kept.set(index, turn)
+      userBudget -= turn.text.length
+      budget -= turn.text.length
+    } else if (mustKeep) {
+      // 保底:最新用户消息即使超预算也截断保留。
+      const slice = userBudget > 16 ? userBudget : Math.min(16, budget)
+      if (slice > 0) {
+        kept.set(index, { role: turn.role, text: `${turn.text.slice(0, slice)}…` })
+        userBudget -= slice
+        budget -= slice
+      }
     }
-    kept.unshift(turn)
+  }
+
+  // 2) 助手回复用剩余预算,从新到旧;装不下就跳过,不中断。
+  const assistants = indexed.filter((x) => x.turn.role === 'assistant')
+  for (let i = assistants.length - 1; i >= 0; i--) {
+    const { turn, index } = assistants[i]
+    if (turn.text.length > budget) continue
+    kept.set(index, turn)
     budget -= turn.text.length
   }
-  return kept
+
+  // 3) 按原始时间顺序还原。
+  return [...kept.entries()].sort(([a], [b]) => a - b).map(([, turn]) => turn)
 }
 
 /**

@@ -133,6 +133,54 @@ import { buildSystemPrompt, buildUserPayload, capConversationContext, compactPar
   console.log('✓ p9 上下文预算收敛')
 }
 
+// p10. 回归:用户消息必须保底,不能被长助手回复挤空
+//
+// 历史缺陷:用户与助手共用单一预算、从最新往回走遇到装不下就 break,
+// 于是「4×user(200) 交错 4×assistant(600)」只剩 1 条用户消息,
+// 而「1 条用户输入 + 4 段长助手步骤」(agentic 会话典型形态)会让用户消息**归零**。
+// 纯助手片段比不带上下文更糟:buildUserPayload 要求「不要回答、延续或引用」,
+// 模型容易把上文当成待续写的正文。
+{
+  const interleaved = []
+  for (let i = 0; i < 4; i++) {
+    interleaved.push({ role: 'user', text: `U${i}${'x'.repeat(197)}` })
+    interleaved.push({ role: 'assistant', text: `A${i}${'y'.repeat(597)}` })
+  }
+  const mixed = capConversationContext(interleaved)
+  const mixedUsers = mixed.filter((t) => t.role === 'user').length
+  assert.ok(mixedUsers >= 1, `混合长度下必须保留至少 1 条用户消息,实际 ${mixedUsers}`)
+  assert.ok(mixed.reduce((s, t) => s + t.text.length, 0) <= 1600, '混合长度下总量不得超预算')
+
+  // agentic 形态:1 条用户输入 + 4 段 600 字符助手步骤
+  const agentic = [{ role: 'user', text: `U${'z'.repeat(199)}` }]
+  for (let i = 0; i < 4; i++) agentic.push({ role: 'assistant', text: `A${i}${'y'.repeat(597)}` })
+  const kept = capConversationContext(agentic)
+  assert.ok(
+    kept.some((t) => t.role === 'user'),
+    '长助手步骤不得把唯一的用户消息挤掉(否则喂给模型的只有助手片段)',
+  )
+  assert.ok(kept.reduce((s, t) => s + t.text.length, 0) <= 1600, 'agentic 形态总量不得超预算')
+
+  // 顺序必须保持时间升序(用户在前)
+  const firstUser = kept.findIndex((t) => t.role === 'user')
+  const firstAssistant = kept.findIndex((t) => t.role === 'assistant')
+  assert.equal(firstUser, 0, '用户消息应位于最前(时间升序)')
+  assert.ok(firstAssistant === -1 || firstAssistant > firstUser, '助手消息应排在用户消息之后')
+
+  // 极端:最新用户消息单条就超过总预算 → 仍须截断保留,不能整条丢
+  const oversized = capConversationContext([{ role: 'user', text: 'w'.repeat(5000) }])
+  assert.equal(oversized.length, 1)
+  assert.equal(oversized[0].role, 'user')
+
+  // 纯助手输入(无用户消息)不应崩溃,且仍受预算约束
+  const assistantsOnly = Array.from({ length: 4 }, () => ({ role: 'assistant', text: 'q'.repeat(600) }))
+  const onlyAssistant = capConversationContext(assistantsOnly)
+  assert.ok(onlyAssistant.reduce((s, t) => s + t.text.length, 0) <= 1600)
+  assert.equal(onlyAssistant.filter((t) => t.role === 'user').length, 0)
+
+  console.log('✓ p25 用户消息保底(混合长度不归零)')
+}
+
 // 10. 策略分叉:默认(无上下文)套结构模板;intent(有上下文)提炼目的 + 润色、不套模板
 {
   const tpl = buildSystemPrompt('zh')

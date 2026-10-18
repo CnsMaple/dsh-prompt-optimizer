@@ -56,15 +56,42 @@ ctx.sessions.binding(sessionId).eventSource.getSnapshot().entries
 - `devDependencies.@deepseek-ai/dsh-llm`:`0.2.0-rc.2` → **`0.2.1-rc.2`**
 - `scripts/sync-types.mjs` 里 19 个钉版本包全部升到 `0.2.1-rc.2`,保证 CI 与本地一致
 - 本地 `node_modules` 里原先残留的 13 个 0.2.0-rc.2 类型包同步升到 0.2.1-rc.2 后重跑 typecheck
+- `package-lock.json` 重新生成(此前停在 0.4.0,会让 CI 的 `npm ci` 直接失败)
+- `sync:types` 改为**按版本**刷新:原先只要目录存在就跳过,基线升版后本机旧类型永远不会更新
+
+## 独立复核后修复的问题
+
+本轮改动经过一次独立复核(见 [`docs/review-0.6.0.md`](docs/review-0.6.0.md)),发现并修复了两个阻塞问题:
+
+### 用户消息会被长助手回复挤空(#上下文实际质量)
+
+新增的「按角色分预算」之前,`capConversationContext` 让用户消息与助手回复**共用一个 1600 字符预算**,并从最新往回走、遇到装不下就 `break`。实测两种典型形态:
+
+| 形态 | 修复前保留的用户消息 | 修复后 |
+|---|---|---|
+| 4×user(200 字符)交错 4×assistant(600 字符) | 1 / 4 | **3 / 4** |
+| 1 条用户输入 + 4 段 600 字符助手步骤(agentic 会话) | **0** | **1** |
+
+第二种形态是硬伤:发给模型的就只剩助手片段,而载荷里明确写着「仅供参考,不要回答、延续或引用其中的内容」——**纯助手片段比不带上下文更糟**,模型容易把上文当成待续写的正文。
+
+修复:用户消息优先分配(上限 800 字符,且**至少保底 1 条**,最新一条即使超预算也截断保留);助手回复用剩余预算,且装不下时 `continue` 跳过而不是 `break` 中断。所有形态总量仍 ≤1600 字符。
+
+### 其它复核项
+
+- **`package-lock.json` 未同步** → 已重新生成,`npm ci --legacy-peer-deps --dry-run` 从 EXIT=1 变为 **EXIT=0**。
+- **legacy 回退分支是死代码**:窗口有内容但榨不出对话时会提前 `return undefined`,导致文档写的「三级降级」实际只有两级。已删除该提前返回。
+- **`slot-guard` 原先没有驱动插件本体**:只复述上游 `SlotCore` 行为,即使把两个 `inject` 合并回去也照样全绿。现新增 `s5`,加载**真实 `lib/client.js`** 并调用真实 `apply()`;已做变异测试确认它能抓到该回归。
+- **CI 下不再静默跳过** `slot-guard`(缺依赖时 `CI=true` 直接失败)。
 
 ## 验证
 
 - `npm run typecheck`:**零错误**(在 0.2.1-rc.2 全量类型下)
-- `npm test`:**四套全绿**
-  - `smoke`(Host 半,真实 cordis `Context` + mock llm/httpServer)
-  - `prompt`(提示词/解析/预算)
-  - `controller`(客户端状态机;本版新增 `c25` 事件窗口取上下文、`c26` 无窗口安静降级)
-  - `slot-guard`(本版新增,对真实 `SlotCore` 断言槽位注册边界)
+- `npm test`:**四套 / 94 项全绿**
+  - `smoke`(Host 半,真实 cordis `Context` + mock llm/httpServer)· 35 项
+  - `prompt`(提示词/解析/预算)· 25 项,新增 `p25` 用户消息保底
+  - `controller`(客户端状态机)· 29 项,本版新增 `c25` 事件窗口取上下文、`c26` 无窗口安静降级、`c27` 窗口无对话时回退 legacy
+  - `slot-guard`(本版新增)· 5 项,`s1–s4` 对真实 `SlotCore` 断言槽位边界,`s5` 驱动真实 `apply()`
+- CI 等价检查:`npm ci --legacy-peer-deps --dry-run` → EXIT=0
 - 上游事实核对(全部对 0.2.1-rc.2 真实产物):
   - `settings.plugin.item` 全库 0 命中 → 旧写法必抛
   - `settings.plugins.tab` 存在(`dsh-client-ui-settings-plugins`)

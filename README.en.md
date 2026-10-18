@@ -110,7 +110,7 @@ dsh plugin --profile web remove @y1x1n/dsh-prompt-optimizer
 
 ## Compatibility
 
-> **This version (v0.6.0) targets DeepSeek Harness**:
+> **This version (v0.6.1) targets DeepSeek Harness**:
 >
 > | dsh version | Optimize route / model calls | Settings page (incl. GitHub link) | Composer button / result panel | Session context |
 > |---|---|---|---|---|

@@ -754,4 +754,56 @@ const DONE = {
   console.log('✓ c26 无事件窗口时安静降级')
 }
 
+// c27. 回归:事件窗口有内容但榨不出对话(只有 transient 实时块)时,
+//      必须**继续**降级到 legacy 查询面,而不是直接放弃。
+//      (旧实现在此处 return undefined,使 legacy 分支成为死代码。)
+{
+  const ctx = {}
+  let legacyCalls = 0
+  ctx.connection = {
+    api: {
+      sessions: {
+        history: async () => {
+          legacyCalls += 1
+          return {
+            ok: true,
+            value: {
+              hasMore: false,
+              events: [
+                { event: { type: 'user/message', seq: 0, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '来自 legacy 的用户消息' }] } } },
+                { event: { type: 'assistant/message', seq: 1, time: 2, data: { message: { content: [{ type: 'text', text: '来自 legacy 的助手回复' }] } } } },
+              ],
+            },
+          }
+        },
+      },
+    },
+  }
+  ctx.sessions = {
+    binding: () => ({
+      eventSource: {
+        getSnapshot: () => ({
+          // 只有 transient 实时块,extractContextTurns 榨不出任何对话
+          entries: [
+            { type: 'transient', event: { type: 'assistant/live-chunk', seq: 1.5, time: 3, data: { chunk: { type: 'text-delta', text: '未落定的实时片段' } } } },
+          ],
+        }),
+      },
+    }),
+  }
+  const c = createOptimizerController(ctx, { getSessions: () => ctx.sessions })
+  await withFetch(
+    () => sseResponse([DONE]),
+    async (calls) => {
+      await c.optimize('草稿', 's1')
+      assert.equal(legacyCalls, 1, '窗口榨不出对话时必须回退到 legacy 查询面')
+      const ctxTurns = calls[0].body.context
+      assert.ok(Array.isArray(ctxTurns) && ctxTurns.length === 2, '应使用 legacy 提供的上下文')
+      assert.equal(ctxTurns[0].text, '来自 legacy 的用户消息')
+      assert.ok(!JSON.stringify(ctxTurns).includes('未落定的实时片段'), 'transient 片段不得进入上下文')
+    },
+  )
+  console.log('✓ c27 窗口无对话时回退到 legacy 查询面')
+}
+
 console.log('\ncontroller: all passed')

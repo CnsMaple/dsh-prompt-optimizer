@@ -29,6 +29,11 @@ let SlotCore
 try {
   ;({ SlotCore } = await import('@deepseek-ai/dsh-client-ui-slots'))
 } catch (error) {
+  // CI 里缺这个包说明依赖装错了,必须失败——静默 SKIP 会让这条回归保护悄悄消失。
+  if (process.env.CI === 'true' || process.env.CI === '1') {
+    console.error(`slot-guard: FAIL — 在 CI 环境下 @deepseek-ai/dsh-client-ui-slots 必须可用:${error.message}`)
+    process.exit(1)
+  }
   console.log(`slot-guard: SKIP (@deepseek-ai/dsh-client-ui-slots 不可用: ${error.message})`)
   process.exit(0)
 }
@@ -102,6 +107,75 @@ function host021() {
   } else result.item = 'skipped'
   assert.deepEqual(result, { tab: 'skipped', item: 'registered' })
   console.log('✓ s4 0.1.x 宿主上 tab 分支安全跳过')
+}
+
+// s5. **驱动真实插件**:模拟宿主只声明 `settings.plugins.tab`(0.2.1 形态),
+//     跑 build 出来的 client bundle 的 apply(),断言:
+//       a) 不抛异常;
+//       b) 恰好注册了 1 个 tab 条目;
+//     并且断言插件**确实调用了两次 slots.inject**(一个槽位一次)。
+//
+// 为什么必须有这条:s1–s4 只是对上游 SlotCore 行为的复述,并不 import 插件。
+// 如果有人把 index.tsx 里两个 `slotsAny.inject(...)` 合并回一个回调,
+// s1–s4 依旧全绿,而线上会炸。s5 直接锁定插件的实际注册形状。
+{
+  // client bundle 是浏览器 loader 形态(`window.__ModuleLoader__.load({id, factory})`),
+  // 在 Node 里先铺一个最小的 loader 门面再 import,拿到的就是**真实构建产物**。
+  const factories = new Map()
+  globalThis.window = {
+    __ModuleLoader__: {
+      load(registration) {
+        factories.set(registration.id, registration.factory)
+      },
+    },
+  }
+  await import('../lib/client.js')
+  const pkg = JSON.parse(await import('node:fs').then((fs) => fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')))
+  assert.ok(factories.has(pkg.name), `client bundle 必须以包名注册 loader id:${pkg.name}`)
+  const requireStub = (name) => {
+    if (name === 'react' || name === 'react/jsx-runtime') return {}
+    throw new Error(`unexpected require(${name})`)
+  }
+  const { apply } = factories.get(pkg.name)(requireStub)
+
+  const tabCore = host021()
+  const injectedKeys = []
+  const registeredNames = []
+
+  // 最小 ctx 桩:只提供 apply() 会碰到的面。
+  const slots = {
+    inject(key, callback) {
+      injectedKeys.push(key)
+      // 模拟上游:只有宿主声明了该槽位才触发回调(其余静默等待)。
+      if (tabCore.specDynamic(key) === undefined) return () => {}
+      return callback()
+    },
+    register(options, component) {
+      registeredNames.push(options.name)
+      return tabCore.register(options, component)
+    },
+  }
+  const ctx = {
+    inject() {},
+    effect(fn) {
+      const dispose = fn()
+      return typeof dispose === 'function' ? dispose : () => {}
+    },
+    connection: {},
+    slots,
+  }
+
+  assert.doesNotThrow(() => apply(ctx), '0.2.1 宿主形态下 apply() 不得抛异常')
+
+  assert.deepEqual(
+    [...injectedKeys].sort(),
+    ['settings.plugin.item', 'settings.plugins.tab'],
+    '两个设置槽位必须各自独立 inject(合并成一个回调会在 0.2.1 上抛错)',
+  )
+  assert.deepEqual(registeredNames, ['settings.plugins.tab'], '只应注册宿主声明过的那个槽位')
+  assert.equal(tabCore.entries('settings.plugins.tab').length, 1, 'tab 条目应恰好注册 1 次')
+  delete globalThis.window
+  console.log('✓ s5 真实 apply() 在 0.2.1 宿主下安全且只注册已声明槽位')
 }
 
 console.log('slot-guard: all passed')

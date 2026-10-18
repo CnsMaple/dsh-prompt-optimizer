@@ -110,7 +110,7 @@ dsh plugin --profile web remove @y1x1n/dsh-prompt-optimizer
 
 ## 兼容性
 
-> **当前版本(v0.6.0)适配 DeepSeek Harness**:
+> **当前版本(v0.6.1)适配 DeepSeek Harness**:
 >
 > | dsh 版本 | 优化路由 / 模型调用 | 设置页(含 GitHub 入口) | 发送栏按钮 / 结果面板 | 携带会话上下文 |
 > |---|---|---|---|---|

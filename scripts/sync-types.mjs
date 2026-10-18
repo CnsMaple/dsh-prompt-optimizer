@@ -58,9 +58,24 @@ mkdirSync(tmp, { recursive: true })
 try {
   for (const [shortName, version] of Object.entries(PACKAGES)) {
     const target = join(nmDir, shortName)
-    if (existsSync(target)) continue
+    // 只在「已存在且版本正好是钉的版本」时跳过。原先只看目录是否存在,
+    // 于是把 PACKAGES 的钉版本从 0.2.0-rc.2 升到 0.2.1-rc.2 之后,
+    // 本机已有的旧目录永远不会被刷新,typecheck 实际仍跑在旧类型上。
+    if (existsSync(target)) {
+      const installed = (() => {
+        try {
+          return JSON.parse(readFileSync(join(target, 'package.json'), 'utf-8')).version
+        } catch {
+          return undefined
+        }
+      })()
+      if (installed === version) continue
+      process.stdout.write(`refresh @deepseek-ai/${shortName} ${installed ?? '?'} -> ${version} ... `)
+      rmSync(target, { recursive: true, force: true })
+    } else {
+      process.stdout.write(`pack @deepseek-ai/${shortName}@${version} ... `)
+    }
     const full = `@deepseek-ai/${shortName}@${version}`
-    process.stdout.write(`pack ${full} ... `)
     const out = execSync(`npm pack "${full}" --pack-destination "${tmp}"`, { stdio: ['ignore', 'pipe', 'inherit'] })
     const tgzName = out.toString().trim().split('\n').pop()
     // tar 参数全部用相对路径:Windows 盘符会被 tar 误认为远程主机(C:)。
