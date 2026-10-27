@@ -321,6 +321,23 @@ export function createResultDock(controller: OptimizerController) {
           </button>
         </div>
 
+        {/* 斜杠命令的兜底提示(命令层拿不到输入框时唯一可见的反馈) */}
+        {state.notice && (
+          <div
+            style={{
+              margin: '8px 12px 0',
+              padding: '8px 10px',
+              borderRadius: 8,
+              fontSize: 12,
+              lineHeight: '18px',
+              color: state.notice.level === 'error' ? 'var(--dsw-alias-state-error, #c0392b)' : 'inherit',
+              background: 'var(--dsw-alias-fill-secondary, rgba(128,128,128,0.12))',
+            }}
+          >
+            {state.notice.text}
+          </div>
+        )}
+
         {state.status === 'loading' && (
           <>
             <div style={styles.loading}>

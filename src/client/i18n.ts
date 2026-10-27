@@ -62,6 +62,8 @@ const dict = {
     'cmd.nothingToUndo': '没有可撤回的优化(只在刚替换过、且尚未手动编辑时可用)。',
     'cmd.undone': '已恢复优化前的原文。',
     'cmd.failed': '优化失败:{error}',
+    'cmd.noInputService': '无法访问输入框(当前宿主没有 conversation.input 服务),命令未执行。',
+    'cmd.noScope': '无法访问输入框(会话作用域不可用:{error}),命令未执行。',
     'settings.loading': '设置加载中…',
     // 0.2.1-rc.2 删除了 ConfigFormSnapshot.mode('host' | 'memory'):设置只可能是
     // 宿主持久化,不再有浏览器进程内内存模式。文案随之去掉「内存模式」措辞,
@@ -158,6 +160,8 @@ const dict = {
     'cmd.nothingToUndo': 'Nothing to undo (available only right after a replace, before you edit the draft).',
     'cmd.undone': 'Restored the text from before the optimization.',
     'cmd.failed': 'Optimization failed: {error}',
+    'cmd.noInputService': 'Cannot reach the composer (this host has no conversation.input service); command not executed.',
+    'cmd.noScope': 'Cannot reach the composer (session scope unavailable: {error}); command not executed.',
     'settings.loading': 'Loading settings…',
     // 0.2.1-rc.2 removed ConfigFormSnapshot.mode ('host' | 'memory'): settings are
     // always Host-persisted now, there is no process-local memory mode.

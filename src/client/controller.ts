@@ -42,11 +42,16 @@ export interface OptimizerState {
   last: { text: string; sessionId: SessionId; prefix?: string } | null
   /** 「替换输入框」后的撤回依据:替换前的原文 + 替换后的文本(用于检测用户编辑)。 */
   applied: { backup: string; text: string } | null
+  /**
+   * 斜杠命令的兜底提示(如拿不到输入框)。面板没有结果可展示时用它把
+   * 一句说明推给用户——命令层碰不到 composer 时,这是唯一可见的反馈。
+   */
+  notice: { level: 'info' | 'error'; text: string } | null
 }
 
 const ROUTE = '/dsh-prompt-optimizer/optimize'
 
-const INITIAL: OptimizerState = { open: false, status: 'idle', error: null, result: null, live: null, last: null, applied: null }
+const INITIAL: OptimizerState = { open: false, status: 'idle', error: null, result: null, live: null, last: null, applied: null, notice: null }
 
 /**
  * 拆斜杠命令前缀:「/goal 帮我……」只优化正文,替换时拼回前缀,避免命令词被改写。
@@ -462,6 +467,10 @@ export function createOptimizerController(
     },
     markApplied(applied: { backup: string; text: string }) {
       set({ applied })
+    },
+    /** 斜杠命令的外部提示:打开面板并显示一条说明(不触发模型调用)。 */
+    notify(level: 'info' | 'error', text: string) {
+      set({ open: true, notice: { level, text } })
     },
     clearApplied() {
       if (state.applied) set({ applied: null })

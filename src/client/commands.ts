@@ -93,17 +93,25 @@ export function registerPromptCommands(
   }
 
   /**
-   * 取本会话的输入机器。命令执行时传入的 session context 本身就是会话作用域的
-   * ctx,直接交给 InputHub 即可;取不到时返回 undefined(调用方提示并放弃)。
+   * 取本会话的输入机器。
+   *
+   * 注意 `InputHub.for(actx)` 要的是**会话作用域的 ctx**(它会用
+   * `sessions.sessionOf(actx)` 反查会话,再校验 binding 是否仍被保留);命令的
+   * run(session) 只给到 `{ sessionId }` 而不是 scope ctx,因此这里只能
+   * 「尽力而为」:先用插件自己的 ctx 试一次。失败时返回原因字符串,交给调用方
+   * 用 notify 告诉用户,而不是静默无反应(静默无反应正是要避免的体验)。
    */
-  const resolveInput = (): SessionInputLike | undefined => {
+  const resolveInput = (): { input?: SessionInputLike; reason?: string } => {
     const conversation = (ctx as unknown as { conversation?: ConversationLike }).conversation
-    if (!conversation?.input?.for) return undefined
+    if (!conversation?.input?.for) {
+      return { reason: translate('cmd.noInputService') }
+    }
     try {
-      return conversation.input.for(ctx)
+      return { input: conversation.input.for(ctx) }
     } catch (cause) {
-      console.warn('[dsh-prompt-optimizer] 取会话输入机器失败:', cause)
-      return undefined
+      const message = cause instanceof Error ? cause.message : String(cause)
+      console.warn('[dsh-prompt-optimizer] 取会话输入机器失败:', message)
+      return { reason: translate('cmd.noScope').replace('{error}', message) }
     }
   }
 
@@ -114,6 +122,15 @@ export function registerPromptCommands(
     } catch {
       return ''
     }
+  }
+
+  /**
+   * 兜底提示通道:拿不到输入机器时,输入框调不通,只能走面板。
+   * controller.notify() 会把文案推给 ResultDock 渲染成一条提示条(见 controller/ResultDock)。
+   */
+  const notifyThroughController = (ctrl: OptimizerController, text: string): void => {
+    if (!text) return
+    ctrl.notify('error', text)
   }
 
   const disposers: (() => void)[] = []
@@ -128,8 +145,19 @@ export function registerPromptCommands(
       ui: {
         kind: 'action',
         run: (session) => {
-          const input = resolveInput()
-          if (!input) return
+          const resolved = resolveInput()
+          const input = resolved.input
+          if (!input) {
+            // 拿不到输入机器必须让用户看见原因(不能静默无反应)。
+            console.warn('[dsh-prompt-optimizer] /optimize 无法访问输入框:', resolved.reason)
+            try {
+              notifyThroughController(controller, resolved.reason ?? '')
+            } catch {
+              /* 兜底提示也失败时不打崩命令 */
+            }
+            return
+          }
+          console.info('[dsh-prompt-optimizer] /optimize 触发,session=%s', session?.sessionId)
           const state = controller.getSnapshot()
           if (state.status === 'loading') {
             input.notify('info', translate('cmd.busy'))
@@ -179,8 +207,17 @@ export function registerPromptCommands(
       ui: {
         kind: 'action',
         run: () => {
-          const input = resolveInput()
-          if (!input) return
+          const resolved = resolveInput()
+          const input = resolved.input
+          if (!input) {
+            console.warn('[dsh-prompt-optimizer] /optimize-undo 无法访问输入框:', resolved.reason)
+            try {
+              notifyThroughController(controller, resolved.reason ?? '')
+            } catch {
+              /* 同上 */
+            }
+            return
+          }
           const applied = controller.getSnapshot().applied
           if (!applied) {
             input.notify('info', translate('cmd.nothingToUndo'))

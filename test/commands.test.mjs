@@ -30,9 +30,10 @@ function makeHarness(initDraft, applied) {
     notify(level, text) { notices.push({ level, text }) },
   }
   const ctx = { conversation: { input: { for: () => input } } }
-  const state = { status: 'idle', applied }
+  const state = { status: 'idle', applied, notice: null }
   const controller = {
     getSnapshot: () => state,
+    notify(level, text) { state.notice = { level, text } },
     async optimize(body, sessionId) {
       calls.push({ body, sessionId })
       return { optimized: '优化后的提示词', wellFormed: true }
@@ -90,6 +91,7 @@ function makeHarness(initDraft, applied) {
   const original = h.calls
   const ctx = { conversation: { input: { for: () => ({ state: { getSnapshot: () => ({ draft: '/goal 帮我写个脚本' }) }, setDraft: (t) => h.sets.push(t), notify: () => {} }) } } }
   const controller = {
+    notify() {},
     getSnapshot: () => ({ status: 'idle', applied: null }),
     async optimize() { return { optimized: '优化稿', prefix: '/goal', wellFormed: true } },
     markApplied() {}, clearApplied() {},
@@ -141,6 +143,43 @@ function makeHarness(initDraft, applied) {
     dispose()
   } catch { threw = true }
   assert.equal(threw, false, 'R10 缺服务不抛错')
+}
+
+// R11:拿不到会话输入机器时,不能静默无反应 —— 必须经 controller.notify 给出原因
+{
+  const notices = []
+  const reg = new Map()
+  const controller = {
+    notify: (level, text) => notices.push({ level, text }),
+    getSnapshot: () => ({ status: 'idle', applied: null }),
+    async optimize() { throw new Error('不该走到这里') },
+    markApplied() {},
+    clearApplied() {},
+  }
+  // InputHub.for 在非会话作用域 ctx 上会抛 "requires a retained Session scope"
+  const ctx = { conversation: { input: { for: () => { throw new Error('conversation.input.for requires a retained Session scope') } } } }
+  registerPromptCommands(ctx, controller, () => ({ register: (c) => { reg.set(c.name, c); return () => {} } }))
+  await reg.get(COMMAND_OPTIMIZE).ui.run({ sessionId: 's1' })
+  await new Promise((r) => setTimeout(r, 0))
+  assert.equal(notices.length, 1, 'R11 失败时有可见提示')
+  assert.equal(notices[0].level, 'error', 'R11b 提示级别 error')
+  assert.match(notices[0].text, /无法访问输入框|Cannot reach the composer/, 'R11c 提示说明原因')
+}
+
+// R12:完全没有 conversation 服务时同样给出提示
+{
+  const notices = []
+  const reg = new Map()
+  const controller = {
+    notify: (level, text) => notices.push({ level, text }),
+    getSnapshot: () => ({ status: 'idle', applied: null }),
+    async optimize() {},
+    markApplied() {},
+    clearApplied() {},
+  }
+  registerPromptCommands({}, controller, () => ({ register: (c) => { reg.set(c.name, c); return () => {} } }))
+  await reg.get(COMMAND_UNDO).ui.run({ sessionId: 's1' })
+  assert.equal(notices.length, 1, 'R12 缺服务也有提示')
 }
 
 console.log('commands: all passed')
