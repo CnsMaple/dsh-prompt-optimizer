@@ -1,5 +1,5 @@
 {
-  "name": "@y1x1n/dsh-prompt-optimizer",
+  "name": "@cnsmaple/dsh-prompt-optimizer",
   "version": "0.6.2",
   "description": "DeepSeek Harness 插件:在发送栏旁一键分析并优化提示词(复用当前会话模型)。适配 dsh 0.2.1-rc.3(含官方桌面端)",
   "license": "MIT",
@@ -7,7 +7,7 @@
   "main": "lib/index.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Y1X1n/dsh-prompt-optimizer.git"
+    "url": "git+https://github.com/CnsMaple/dsh-prompt-optimizer.git"
   },
   "bugs": {
     "url": "https://github.com/Y1X1n/dsh-prompt-optimizer/issues"
@@ -41,7 +41,7 @@
     "prepare": "node scripts/build.mjs",
     "sync:types": "node scripts/sync-types.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node test/smoke.mjs && node test/prompt.test.mjs && node test/controller.test.mjs && node test/slot-guard.test.mjs && node test/upstream-contract.test.mjs"
+    "test": "node test/smoke.mjs && node test/prompt.test.mjs && node test/controller.test.mjs && node test/commands.test.mjs && node test/commands-bundle.test.mjs && node test/slot-guard.test.mjs && node test/upstream-contract.test.mjs"
   },
   "dsh": {
     "manifestVersion": 1,
@@ -54,7 +54,8 @@
         "@deepseek-ai/dsh-client-connection",
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-settings-plugins"
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-client-ui-commands"
       ]
     }
   },

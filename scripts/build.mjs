@@ -40,6 +40,18 @@ await build({
   logLevel: 'info',
 })
 
+// 斜杠命令:独立 ESM 产物,供单元测试直接引用(纯逻辑 + 宿主服务的窄接口)。
+await build({
+  entryPoints: ['src/client/commands.ts'],
+  outfile: 'lib/commands.js',
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node18',
+  packages: 'external',
+  logLevel: 'info',
+})
+
 // Client 半:loader 的 lazy-CJS factory 形态(对齐官方包的产物结构)。
 // react 与 @deepseek-ai/* 是页面运行时外部模块,不打包进 bundle。
 // 注意:loader id 必须等于插件 npm 包名 —— 宿主 client-modules 按包名 serve
@@ -69,4 +81,4 @@ await build({
   logLevel: 'info',
 })
 
-console.log('[build] lib/index.js + lib/client.js + lib/prompt.js + lib/controller.js done')
+console.log('[build] lib/index.js + lib/client.js + lib/prompt.js + lib/controller.js + lib/commands.js done')

@@ -50,6 +50,18 @@ const dict = {
     'panel.duration': '用时',
     'panel.truncated': '输出达到 Token 上限被截断。可在设置的插件页「提示词优化」中调高「最大输出 Token」。',
     'panel.notWellFormed': '模型未完全遵守输出格式,以上内容可能混入多余文字,替换前请扫一眼。',
+    // 斜杠命令(/optimize、/optimize-undo)
+    'cmd.optimize': '优化提示词',
+    'cmd.optimizeDesc': '用当前设置优化输入框草稿,结果直接替换输入框',
+    'cmd.undo': '撤回优化',
+    'cmd.undoDesc': '把输入框恢复成上次优化前的原文',
+    'cmd.empty': '输入框是空的:先写好草稿,再执行 /optimize。',
+    'cmd.busy': '上一次优化还没结束,请稍候……',
+    'cmd.noSession': '当前没有可用会话,无法优化。',
+    'cmd.applied': '已优化并替换输入框;如需恢复原文执行 /optimize-undo。',
+    'cmd.nothingToUndo': '没有可撤回的优化(只在刚替换过、且尚未手动编辑时可用)。',
+    'cmd.undone': '已恢复优化前的原文。',
+    'cmd.failed': '优化失败:{error}',
     'settings.loading': '设置加载中…',
     // 0.2.1-rc.2 删除了 ConfigFormSnapshot.mode('host' | 'memory'):设置只可能是
     // 宿主持久化,不再有浏览器进程内内存模式。文案随之去掉「内存模式」措辞,
@@ -134,6 +146,18 @@ const dict = {
     'panel.duration': 'took',
     'panel.truncated': 'Output hit the token cap and was truncated. Raise "Max output tokens" in the "Prompt Optimizer" tab of the plugins settings page.',
     'panel.notWellFormed': 'The model did not fully follow the output format; the content above may contain extra text — review before replacing.',
+    // Slash commands (/optimize, /optimize-undo)
+    'cmd.optimize': 'Optimize prompt',
+    'cmd.optimizeDesc': 'Optimize the composer draft with current settings and replace the input',
+    'cmd.undo': 'Undo optimization',
+    'cmd.undoDesc': 'Restore the composer to the text from before the last optimize',
+    'cmd.empty': 'The input box is empty — write a draft first, then run /optimize.',
+    'cmd.busy': 'A previous optimization is still running, please wait…',
+    'cmd.noSession': 'No active session, cannot optimize.',
+    'cmd.applied': 'Optimized and replaced the input; run /optimize-undo to restore the original.',
+    'cmd.nothingToUndo': 'Nothing to undo (available only right after a replace, before you edit the draft).',
+    'cmd.undone': 'Restored the text from before the optimization.',
+    'cmd.failed': 'Optimization failed: {error}',
     'settings.loading': 'Loading settings…',
     // 0.2.1-rc.2 removed ConfigFormSnapshot.mode ('host' | 'memory'): settings are
     // always Host-persisted now, there is no process-local memory mode.

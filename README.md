@@ -12,7 +12,26 @@
 DeepSeek Harness 插件:在会话输入框(发送栏)旁提供一个「优化」按钮(✨ 图标),一键分析并优化当前输入的提示词草稿,**结果经 SSE 流式逐段上屏**。优化调用默认复用当前会话的模型路由(每次点击实时读取,会话里切换模型立即生效)。
 
 - **Host 半侧**:注册 `POST /dsh-prompt-optimizer/optimize`(SSE 流式)与 `POST /dsh-prompt-optimizer/test-model`(连通性探活)两条路由,调用 `ctx.llm` 完成「分析 + 改写」。
-- **Client 半侧**:向 `conversation.input.right` 槽位注入按钮,向 `conversation.input.dock` 注入结果面板(输入卡上方整行、与 TodoDock 同族,新会话界面也渲染,且不遮挡输入框),向 `settings.plugin.item` 注入可折叠的设置卡片(设置页自动获得配置界面,无需单独开发页面)。界面文案跟随 DSH 界面语言(中文 / English)。
+- **Client 半侧**:向 `conversation.input.right` 槽位注入按钮,向 `conversation.input.dock` 注入结果面板(输入卡上方整行、与 TodoDock 同族,新会话界面也渲染,且不遮挡输入框),向 `settings.plugin.item` 注入可折叠的设置卡片(设置页自动获得配置界面,无需单独开发页面),并向 `ctx.commandUi` 注册两个客户端斜杠命令。界面文案跟随 DSH 界面语言(中文 / English)。
+
+> ### 🔀 本仓库相对上游的改动(PR 候选)
+>
+> 上游 [Y1X1n/dsh-prompt-optimizer](https://github.com/Y1X1n/dsh-prompt-optimizer) 只有 ✨ 按钮;
+> 本 fork 新增两个**客户端斜杠命令**,让"命令触发 + 直接写回输入框"成为可能:
+>
+> | 命令 | 作用 |
+> |---|---|
+> | `/optimize` | 用当前设置(模型路由/模式/上下文…全部沿用)优化输入框草稿,**完成后直接替换输入框**;结果面板照常弹出 |
+> | `/optimize-undo` | 撤回上一次替换,把输入框恢复成优化前原文;无记录时只提示、不动草稿 |
+>
+> **为什么必须做在客户端**:DSH 的 Host 侧命令只能把结果回显到命令面板,**够不到浏览器里的草稿**;
+> 草稿归属于客户端输入机器(`conversation.input`)。本插件原有的「替换输入框 / 撤回」本来就走
+> 客户端的 `inputActions.setDraft`,命令复用同一条路径,因此不会出现"命令结果和按钮结果不一致"。
+>
+> 用法:先写好草稿,再在输入框敲 `/` 选中**「优化提示词」**(或直接输入 `/optimize` 回车)。
+> 命令是**无参数**的 action 命令 —— 消耗触发 token、不向模型提交任何内容。
+>
+> 兼容性:`commandUi` 走**可选注入**,旧版宿主没有该服务时两个命令静默不注册,按钮与面板照常工作。
 
 ## 目录
 

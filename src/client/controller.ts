@@ -20,6 +20,16 @@ export interface OptimizeResult {
   durationMs?: number
 }
 
+/** `optimize()` 的完成结果:供斜杠命令等非 UI 调用方拿到成品并写回输入框。 */
+export interface OptimizeOutcome {
+  /** 优化后的完整提示词(不含斜杠命令前缀)。 */
+  optimized: string
+  /** 原草稿里被拆出的斜杠命令前缀(如 `/goal`),调用方写回时需拼回。 */
+  prefix?: string
+  /** 本次结果是否格式良好(模型没守格式时为 false,仍可作为草稿使用)。 */
+  wellFormed: boolean
+}
+
 export interface OptimizerState {
   open: boolean
   /** cancelled = loading 中被用户取消(O2):面板保持打开,冻结展示已生成的部分。 */
@@ -190,7 +200,7 @@ export function createOptimizerController(
     for (const listener of listeners) listener()
   }
 
-  async function optimize(text: string, sessionId: SessionId) {
+  async function optimize(text: string, sessionId: SessionId): Promise<OptimizeOutcome | undefined> {
     // 斜杠命令只优化正文;前缀记入 last,「替换输入框」时拼回(ResultDock 负责)。
     const split = splitCommandPrefix(text)
     const { prefix, body: draft } = split
@@ -220,6 +230,8 @@ export function createOptimizerController(
       (opts.isContextEnabled?.() ?? true)
         ? state.result.optimized
         : undefined
+    // 完成后的交付物(斜杠命令写回输入框用);失败/取消保持 undefined。
+    let outcome: OptimizeOutcome | undefined
     abort?.abort()
     clearLiveTimer()
     liveRaw = ''
@@ -387,6 +399,12 @@ export function createOptimizerController(
           } else if (event.type === 'done') {
             terminal = true
             clearLiveTimer()
+            // 斜杠命令据此「执行完即写回输入框」;按钮路径忽略返回值。
+            outcome = {
+              optimized: String(event.optimized ?? ''),
+              prefix,
+              wellFormed: event.wellFormed !== false,
+            }
             set({
               status: 'done',
               live: null,
@@ -426,6 +444,7 @@ export function createOptimizerController(
     } finally {
       clearTimeout(watchdog)
     }
+    return outcome
   }
 
   return {

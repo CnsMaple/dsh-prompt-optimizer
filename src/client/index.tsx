@@ -5,6 +5,7 @@ import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import { registerPromptCommands } from './commands.js'
 import { createOptimizeButton } from './OptimizeButton.js'
 import { createResultDock } from './ResultDock.js'
 import { createSettingsCard } from './SettingsCard.js'
@@ -106,6 +107,17 @@ export function apply(ctx: ClientContext): void {
     getSessionModelDirectories: () => modelDirectories,
     // 「携带上下文」的会话事件窗口来源(见上);点击时读取。
     getSessions: () => sessions,
+  })
+
+  // 斜杠命令(/optimize、/optimize-undo):注册在**客户端**命令面才能读写输入框
+  // 草稿(Host 侧命令只能回显到命令面板)。commandUi 是可选服务——旧版宿主没有
+  // 它时按钮与面板照常工作,只少了两个命令,因此走独立 inject 而不并进主 inject。
+  ctx.inject(['commandUi'], (cctx) => {
+    const commandUi = (cctx as unknown as { commandUi?: unknown }).commandUi
+    if (!commandUi) return
+    const dispose = registerPromptCommands(ctx, controller, () => commandUi as never)
+    // effect 作用域:插件卸载/会话销毁时自动注销命令。
+    cctx.effect(() => dispose)
   })
 
   // 发送栏按钮与结果面板。0.1.2 起 conversation.input.* 槽位是 session scope,
